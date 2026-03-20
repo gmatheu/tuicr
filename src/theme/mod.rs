@@ -498,6 +498,86 @@ impl Theme {
         };
         gruvbox_theme(flavor)
     }
+
+    pub fn nord_dark() -> Self {
+        nord_theme(NordFlavor {
+            dark: true,
+            bg0: rgb(46, 52, 64),       // nord0
+            bg1: rgb(59, 66, 82),       // nord1
+            bg2: rgb(67, 76, 94),       // nord2
+            bg3: rgb(76, 86, 106),      // nord3
+            fg0: rgb(216, 222, 233),    // nord4
+            fg1: rgb(229, 233, 240),    // nord5
+            frost0: rgb(143, 188, 187), // nord7
+            frost1: rgb(136, 192, 208), // nord8
+            frost2: rgb(129, 161, 193), // nord9
+            red: rgb(191, 97, 106),     // nord11
+            orange: rgb(208, 135, 112), // nord12
+            yellow: rgb(235, 203, 139), // nord13
+            green: rgb(163, 190, 140),  // nord14
+            syntect_theme: EmbeddedThemeName::Nord,
+        })
+    }
+
+    pub fn nord_light() -> Self {
+        nord_theme(NordFlavor {
+            dark: false,
+            bg0: rgb(236, 239, 244),    // nord6
+            bg1: rgb(229, 233, 240),    // nord5
+            bg2: rgb(216, 222, 233),    // nord4
+            bg3: rgb(76, 86, 106),      // nord3
+            fg0: rgb(46, 52, 64),       // nord0
+            fg1: rgb(59, 66, 82),       // nord1
+            frost0: rgb(143, 188, 187), // nord7
+            frost1: rgb(136, 192, 208), // nord8
+            frost2: rgb(129, 161, 193), // nord9
+            red: rgb(191, 97, 106),     // nord11
+            orange: rgb(208, 135, 112), // nord12
+            yellow: rgb(235, 203, 139), // nord13
+            green: rgb(163, 190, 140),  // nord14
+            syntect_theme: EmbeddedThemeName::Base16OceanLight,
+        })
+    }
+
+    pub fn nord_dark_high_contrast() -> Self {
+        nord_theme(NordFlavor {
+            dark: true,
+            bg0: rgb(46, 52, 64),       // nord0
+            bg1: rgb(59, 66, 82),       // nord1
+            bg2: rgb(67, 76, 94),       // nord2
+            bg3: rgb(76, 86, 106),      // nord3
+            fg0: rgb(236, 239, 244),    // nord6 (boosted from nord4 for contrast)
+            fg1: rgb(229, 233, 240),    // nord5
+            frost0: rgb(143, 188, 187), // nord7
+            frost1: rgb(136, 192, 208), // nord8
+            frost2: rgb(129, 161, 193), // nord9
+            red: rgb(191, 97, 106),     // nord11
+            orange: rgb(208, 135, 112), // nord12
+            yellow: rgb(235, 203, 139), // nord13
+            green: rgb(163, 190, 140),  // nord14
+            syntect_theme: EmbeddedThemeName::Nord,
+        })
+    }
+
+    pub fn nord_light_high_contrast() -> Self {
+        nord_theme(NordFlavor {
+            dark: false,
+            bg0: rgb(236, 239, 244),    // nord6
+            bg1: rgb(229, 233, 240),    // nord5
+            bg2: rgb(216, 222, 233),    // nord4
+            bg3: rgb(67, 76, 94),       // nord2 (deeper than nord3 for contrast)
+            fg0: rgb(46, 52, 64),       // nord0
+            fg1: rgb(59, 66, 82),       // nord1
+            frost0: rgb(143, 188, 187), // nord7
+            frost1: rgb(136, 192, 208), // nord8
+            frost2: rgb(129, 161, 193), // nord9
+            red: rgb(191, 97, 106),     // nord11
+            orange: rgb(208, 135, 112), // nord12
+            yellow: rgb(235, 203, 139), // nord13
+            green: rgb(163, 190, 140),  // nord14
+            syntect_theme: EmbeddedThemeName::Base16OceanLight,
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -520,6 +600,25 @@ struct CatppuccinFlavor {
     lavender: Color,
     peach: Color,
     pink: Color,
+}
+
+#[derive(Clone, Copy)]
+struct NordFlavor {
+    dark: bool,
+    bg0: Color,
+    bg1: Color,
+    bg2: Color,
+    bg3: Color,
+    fg0: Color,
+    fg1: Color,
+    frost0: Color,
+    frost1: Color,
+    frost2: Color,
+    red: Color,
+    orange: Color,
+    yellow: Color,
+    green: Color,
+    syntect_theme: EmbeddedThemeName,
 }
 
 #[derive(Clone, Copy)]
@@ -713,6 +812,69 @@ fn gruvbox_theme(flavor: GruvboxFlavor) -> Theme {
     }
 }
 
+fn nord_theme(flavor: NordFlavor) -> Theme {
+    let accent_fg = if flavor.dark { flavor.bg0 } else { flavor.fg1 };
+    let diff_add_bg = blend(flavor.bg0, flavor.green, 15);
+    let diff_del_bg = blend(flavor.bg0, flavor.red, 15);
+    let syntax_add_bg = blend(flavor.bg0, flavor.green, 10);
+    let syntax_del_bg = blend(flavor.bg0, flavor.red, 10);
+
+    Theme {
+        highlighter: OnceLock::new(),
+
+        panel_bg: flavor.bg0,
+        bg_highlight: flavor.bg1,
+        fg_primary: flavor.fg0,
+        fg_secondary: flavor.fg1,
+        fg_dim: flavor.bg3,
+
+        diff_add: flavor.green,
+        diff_add_bg,
+        diff_del: flavor.red,
+        diff_del_bg,
+        diff_context: flavor.fg0,
+        diff_hunk_header: flavor.frost1,
+        expanded_context_fg: flavor.bg3,
+
+        syntax_add_bg,
+        syntax_del_bg,
+
+        syntect_theme: flavor.syntect_theme,
+
+        file_added: flavor.green,
+        file_modified: flavor.yellow,
+        file_deleted: flavor.red,
+        file_renamed: flavor.frost2,
+
+        reviewed: flavor.green,
+        pending: flavor.yellow,
+
+        comment_note: flavor.frost1,
+        comment_suggestion: flavor.frost0,
+        comment_issue: flavor.red,
+        comment_praise: flavor.green,
+
+        border_focused: flavor.frost1,
+        border_unfocused: flavor.bg1,
+        status_bar_bg: flavor.bg2,
+        cursor_color: flavor.frost2,
+        branch_name: flavor.frost0,
+        help_indicator: flavor.bg3,
+
+        message_info_fg: accent_fg,
+        message_info_bg: flavor.frost1,
+        message_warning_fg: accent_fg,
+        message_warning_bg: flavor.orange,
+        message_error_fg: accent_fg,
+        message_error_bg: flavor.red,
+        update_badge_fg: accent_fg,
+        update_badge_bg: flavor.orange,
+
+        mode_fg: accent_fg,
+        mode_bg: flavor.frost1,
+    }
+}
+
 /// Theme selection from CLI argument
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ThemeArg {
@@ -727,9 +889,13 @@ pub enum ThemeArg {
     CatppuccinMocha,
     GruvboxDark,
     GruvboxLight,
+    NordDark,
+    NordLight,
+    NordDarkHighContrast,
+    NordLightHighContrast,
 }
 
-const THEME_CHOICES: [(&str, ThemeArg); 10] = [
+const THEME_CHOICES: [(&str, ThemeArg); 14] = [
     ("dark", ThemeArg::Dark),
     ("light", ThemeArg::Light),
     ("ayu-light", ThemeArg::AyuLight),
@@ -740,6 +906,10 @@ const THEME_CHOICES: [(&str, ThemeArg); 10] = [
     ("catppuccin-mocha", ThemeArg::CatppuccinMocha),
     ("gruvbox-dark", ThemeArg::GruvboxDark),
     ("gruvbox-light", ThemeArg::GruvboxLight),
+    ("nord-dark", ThemeArg::NordDark),
+    ("nord-light", ThemeArg::NordLight),
+    ("nord-dark-high-contrast", ThemeArg::NordDarkHighContrast),
+    ("nord-light-high-contrast", ThemeArg::NordLightHighContrast),
 ];
 
 /// CLI arguments parsed from command line
@@ -833,6 +1003,10 @@ pub fn resolve_theme(arg: ThemeArg) -> Theme {
         ThemeArg::CatppuccinMocha => Theme::catppuccin_mocha(),
         ThemeArg::GruvboxDark => Theme::gruvbox_dark(),
         ThemeArg::GruvboxLight => Theme::gruvbox_light(),
+        ThemeArg::NordDark => Theme::nord_dark(),
+        ThemeArg::NordLight => Theme::nord_light(),
+        ThemeArg::NordDarkHighContrast => Theme::nord_dark_high_contrast(),
+        ThemeArg::NordLightHighContrast => Theme::nord_light_high_contrast(),
     }
 }
 
@@ -1452,6 +1626,58 @@ mod tests {
     fn should_resolve_catppuccin_latte_syntect_theme() {
         let theme = resolve_theme(ThemeArg::CatppuccinLatte);
         assert_eq!(theme.syntect_theme, EmbeddedThemeName::CatppuccinLatte);
+    }
+
+    #[test]
+    fn should_resolve_nord_dark_to_nord_syntect_theme() {
+        let theme = resolve_theme(ThemeArg::NordDark);
+        assert_eq!(theme.syntect_theme, EmbeddedThemeName::Nord);
+    }
+
+    #[test]
+    fn should_resolve_nord_light_to_ocean_light_syntect_theme() {
+        let theme = resolve_theme(ThemeArg::NordLight);
+        assert_eq!(theme.syntect_theme, EmbeddedThemeName::Base16OceanLight);
+    }
+
+    #[test]
+    fn should_resolve_nord_dark_high_contrast_to_nord_syntect_theme() {
+        let theme = resolve_theme(ThemeArg::NordDarkHighContrast);
+        assert_eq!(theme.syntect_theme, EmbeddedThemeName::Nord);
+    }
+
+    #[test]
+    fn should_resolve_nord_light_high_contrast_to_ocean_light_syntect_theme() {
+        let theme = resolve_theme(ThemeArg::NordLightHighContrast);
+        assert_eq!(theme.syntect_theme, EmbeddedThemeName::Base16OceanLight);
+    }
+
+    #[test]
+    fn should_use_dark_bg_for_nord_dark_mode_foreground() {
+        let theme = Theme::nord_dark();
+        assert_eq!(theme.mode_fg, Color::Rgb(46, 52, 64)); // nord0
+    }
+
+    #[test]
+    fn should_use_fg1_for_nord_light_mode_foreground() {
+        let theme = Theme::nord_light();
+        assert_eq!(theme.mode_fg, Color::Rgb(59, 66, 82)); // nord1
+    }
+
+    #[test]
+    fn should_boost_fg_primary_for_nord_dark_high_contrast() {
+        let dark = resolve_theme(ThemeArg::NordDark);
+        let hc = resolve_theme(ThemeArg::NordDarkHighContrast);
+        assert_ne!(dark.fg_primary, hc.fg_primary);
+        assert_eq!(hc.fg_primary, Color::Rgb(236, 239, 244)); // nord6
+    }
+
+    #[test]
+    fn should_deepen_fg_dim_for_nord_light_high_contrast() {
+        let light = resolve_theme(ThemeArg::NordLight);
+        let hc = resolve_theme(ThemeArg::NordLightHighContrast);
+        assert_ne!(light.fg_dim, hc.fg_dim);
+        assert_eq!(hc.fg_dim, Color::Rgb(67, 76, 94)); // nord2
     }
 
     #[test]
