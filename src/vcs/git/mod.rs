@@ -2,7 +2,7 @@ pub mod context;
 pub mod diff;
 pub mod repository;
 
-use git2::Repository;
+use git2::{ConfigLevel, Repository};
 use std::path::Path;
 
 use crate::error::{Result, TuicrError};
@@ -61,9 +61,70 @@ impl GitBackend {
     }
 }
 
+#[cfg(test)]
+mod username_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn setup_backend(name: Option<&str>) -> (TempDir, GitBackend) {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        if let Some(username) = name {
+            let config = repo.config().unwrap();
+            let mut local = config.open_level(ConfigLevel::Local).unwrap();
+            local.set_str("user.name", username).unwrap();
+        }
+
+        let backend = GitBackend {
+            info: VcsInfo {
+                root_path: repo.workdir().unwrap().to_path_buf(),
+                head_commit: "HEAD".to_string(),
+                branch_name: None,
+                vcs_type: VcsType::Git,
+            },
+            repo,
+        };
+
+        (dir, backend)
+    }
+
+    #[test]
+    fn get_current_username_reads_config_when_present() {
+        let (_dir, backend) = setup_backend(Some("Alice"));
+        let username = backend
+            .get_current_username()
+            .expect("Should read username");
+        assert_eq!(username, "Alice");
+    }
+
+    #[test]
+    fn get_current_username_falls_back_to_anonymous_when_missing() {
+        let (_dir, backend) = setup_backend(None);
+        let username = backend
+            .get_current_username()
+            .expect("Should be able to read username (fallback)");
+        assert_eq!(username, "anonymous");
+    }
+}
+
 impl VcsBackend for GitBackend {
     fn info(&self) -> &VcsInfo {
         &self.info
+    }
+
+    fn get_current_username(&self) -> Result<String> {
+        match self
+            .repo
+            .config()
+            .and_then(|cfg| cfg.open_level(ConfigLevel::Local))
+        {
+            Ok(cfg) => match cfg.get_string("user.name") {
+                Ok(name) if !name.trim().is_empty() => Ok(name),
+                _ => Ok("anonymous".to_string()),
+            },
+            Err(_) => Ok("anonymous".to_string()),
+        }
     }
 
     fn get_working_tree_diff(&self, highlighter: &SyntaxHighlighter) -> Result<Vec<DiffFile>> {

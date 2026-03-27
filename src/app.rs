@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use ratatui::style::Color;
 
-use crate::config::CommentTypeConfig;
+use crate::config::{CommentTypeConfig, PersistenceMode};
 use crate::error::{Result, TuicrError};
 use crate::model::{
     Comment, CommentType, DiffFile, DiffHunk, DiffLine, FileStatus, LineOrigin, LineRange,
     LineSide, ReviewSession, SessionDiffSource,
 };
-use crate::persistence::load_latest_session_for_context;
+use crate::persistence::{load_latest_in_repo_session, load_latest_session_for_context};
 use crate::syntax::SyntaxHighlighter;
 use crate::theme::Theme;
 use crate::update::UpdateInfo;
@@ -262,6 +262,9 @@ pub struct App {
     pub output_to_stdout: bool,
     /// Pending output to print to stdout after TUI exits
     pub pending_stdout_output: Option<String>,
+    pub persistence_mode: PersistenceMode,
+    /// Flag indicating in-repo persistence usage
+    pub in_repo: bool,
     /// Calculated screen position for comment input cursor (col, row) for IME positioning.
     /// Set during render when in Comment mode, None otherwise.
     pub comment_cursor_screen_pos: Option<(u16, u16)>,
@@ -379,8 +382,10 @@ impl App {
         theme: Theme,
         comment_type_configs: Option<Vec<CommentTypeConfig>>,
         output_to_stdout: bool,
+        persistence_mode: PersistenceMode,
         revisions: Option<&str>,
         working_tree: bool,
+        in_repo: bool,
     ) -> Result<Self> {
         let vcs = detect_vcs()?;
         let vcs_info = vcs.info().clone();
@@ -405,6 +410,8 @@ impl App {
                 let session = Self::load_or_create_staged_unstaged_and_commits_session(
                     &vcs_info,
                     &commit_ids,
+                    persistence_mode,
+                    vcs.as_ref(),
                 );
                 let review_commits: Vec<CommitInfo> = vcs
                     .get_commits_info(&commit_ids)?
@@ -439,11 +446,13 @@ impl App {
                     theme,
                     comment_type_configs.clone(),
                     output_to_stdout,
+                    persistence_mode,
                     diff_files,
                     session,
                     DiffSource::StagedUnstagedAndCommits(commit_ids),
                     InputMode::Normal,
                     Vec::new(),
+                    in_repo,
                 )?;
 
                 app.range_diff_files = Some(app.diff_files.clone());
@@ -475,7 +484,12 @@ impl App {
                 &commit_ids,
                 highlighter,
             )?;
-            let session = Self::load_or_create_commit_range_session(&vcs_info, &commit_ids);
+            let session = Self::load_or_create_commit_range_session(
+                &vcs_info,
+                &commit_ids,
+                persistence_mode,
+                vcs.as_ref(),
+            );
             // Get commit info for the inline commit selector
             let review_commits = vcs.get_commits_info(&commit_ids)?;
             // Reverse to newest-first display order
@@ -487,11 +501,13 @@ impl App {
                 theme,
                 comment_type_configs.clone(),
                 output_to_stdout,
+                persistence_mode,
                 diff_files,
                 session,
                 DiffSource::CommitRange(commit_ids),
                 InputMode::Normal,
                 Vec::new(),
+                in_repo,
             )?;
 
             // Set up inline commit selector for multi-commit reviews
@@ -520,8 +536,12 @@ impl App {
                 &vcs_info.root_path,
                 highlighter,
             )?;
-            let session =
-                Self::load_or_create_session(&vcs_info, SessionDiffSource::StagedAndUnstaged);
+            let session = Self::load_or_create_session(
+                &vcs_info,
+                SessionDiffSource::StagedAndUnstaged,
+                persistence_mode,
+                vcs.as_ref(),
+            );
 
             let mut app = Self::build(
                 vcs,
@@ -529,11 +549,13 @@ impl App {
                 theme,
                 comment_type_configs,
                 output_to_stdout,
+                persistence_mode,
                 diff_files,
                 session,
                 DiffSource::StagedAndUnstaged,
                 InputMode::Normal,
                 Vec::new(),
+                in_repo,
             )?;
             app.sort_files_by_directory(true);
             app.expand_all_dirs();
@@ -610,7 +632,8 @@ impl App {
                 SessionDiffSource::WorkingTree
             };
 
-            let session = Self::load_or_create_session(&vcs_info, session_source);
+            let session =
+                Self::load_or_create_session(&vcs_info, session_source, persistence_mode, vcs.as_ref());
 
             let mut app = Self::build(
                 vcs,
@@ -618,11 +641,13 @@ impl App {
                 theme,
                 comment_type_configs,
                 output_to_stdout,
+                persistence_mode,
                 working_tree_diff.unwrap_or_default(),
                 session,
                 diff_source,
                 InputMode::CommitSelect,
                 commit_list,
+                in_repo,
             )?;
 
             app.has_more_commit = commits.len() >= VISIBLE_COMMIT_COUNT;
@@ -639,11 +664,13 @@ impl App {
         theme: Theme,
         comment_type_configs: Option<Vec<CommentTypeConfig>>,
         output_to_stdout: bool,
+        persistence_mode: PersistenceMode,
         diff_files: Vec<DiffFile>,
         mut session: ReviewSession,
         diff_source: DiffSource,
         input_mode: InputMode,
         commit_list: Vec<CommitInfo>,
+        in_repo: bool,
     ) -> Result<Self> {
         // Ensure all diff files are registered in the session
         for file in &diff_files {
@@ -709,6 +736,8 @@ impl App {
             line_annotations: Vec::new(),
             output_to_stdout,
             pending_stdout_output: None,
+            persistence_mode,
+            in_repo,
             comment_cursor_screen_pos: None,
             update_info: None,
             pending_count: None,
@@ -863,17 +892,18 @@ impl App {
     fn load_or_create_commit_range_session(
         vcs_info: &VcsInfo,
         commit_ids: &[String],
+        persistence_mode: PersistenceMode,
+        vcs: &dyn VcsBackend,
     ) -> ReviewSession {
         let newest_commit_id = commit_ids.last().unwrap().clone();
-        let loaded = load_latest_session_for_context(
-            &vcs_info.root_path,
-            vcs_info.branch_name.as_deref(),
+        let loaded = Self::load_session_for_context(
+            vcs_info,
             &newest_commit_id,
             SessionDiffSource::CommitRange,
             Some(commit_ids),
-        )
-        .ok()
-        .and_then(|found| found.map(|(_path, session)| session));
+            persistence_mode,
+            vcs,
+        );
 
         let mut session = loaded.unwrap_or_else(|| {
             let mut s = ReviewSession::new(
@@ -896,17 +926,18 @@ impl App {
     fn load_or_create_staged_unstaged_and_commits_session(
         vcs_info: &VcsInfo,
         commit_ids: &[String],
+        persistence_mode: PersistenceMode,
+        vcs: &dyn VcsBackend,
     ) -> ReviewSession {
         let newest_commit_id = commit_ids.last().unwrap().clone();
-        let loaded = load_latest_session_for_context(
-            &vcs_info.root_path,
-            vcs_info.branch_name.as_deref(),
+        let loaded = Self::load_session_for_context(
+            vcs_info,
             &newest_commit_id,
             SessionDiffSource::StagedUnstagedAndCommits,
             Some(commit_ids),
-        )
-        .ok()
-        .and_then(|found| found.map(|(_path, session)| session));
+            persistence_mode,
+            vcs,
+        );
 
         let mut session = loaded.unwrap_or_else(|| {
             let mut s = ReviewSession::new(
@@ -926,7 +957,12 @@ impl App {
         session
     }
 
-    fn load_or_create_session(vcs_info: &VcsInfo, diff_source: SessionDiffSource) -> ReviewSession {
+    fn load_or_create_session(
+        vcs_info: &VcsInfo,
+        diff_source: SessionDiffSource,
+        persistence_mode: PersistenceMode,
+        vcs: &dyn VcsBackend,
+    ) -> ReviewSession {
         let new_session = || {
             ReviewSession::new(
                 vcs_info.root_path.clone(),
@@ -936,17 +972,14 @@ impl App {
             )
         };
 
-        let Ok(found) = load_latest_session_for_context(
-            &vcs_info.root_path,
-            vcs_info.branch_name.as_deref(),
+        let Some(mut session) = Self::load_session_for_context(
+            vcs_info,
             &vcs_info.head_commit,
             diff_source,
             None,
+            persistence_mode,
+            vcs,
         ) else {
-            return new_session();
-        };
-
-        let Some((_path, mut session)) = found else {
             return new_session();
         };
 
@@ -966,6 +999,41 @@ impl App {
         }
 
         session
+    }
+
+    fn load_session_for_context(
+        vcs_info: &VcsInfo,
+        head_commit: &str,
+        diff_source: SessionDiffSource,
+        commit_range: Option<&[String]>,
+        persistence_mode: PersistenceMode,
+        vcs: &dyn VcsBackend,
+    ) -> Option<ReviewSession> {
+        match persistence_mode {
+            PersistenceMode::Local => load_latest_session_for_context(
+                &vcs_info.root_path,
+                vcs_info.branch_name.as_deref(),
+                head_commit,
+                diff_source,
+                commit_range,
+            )
+            .ok()
+            .and_then(|found| found.map(|(_path, session)| session)),
+            PersistenceMode::Repo => {
+                let username = vcs
+                    .get_current_username()
+                    .unwrap_or_else(|_| "anonymous".to_string());
+                load_latest_in_repo_session(
+                    &vcs_info.root_path,
+                    diff_source,
+                    commit_range,
+                    &username,
+                    0,
+                )
+                .ok()
+                .and_then(|found| found.map(|(_path, session)| session))
+            }
+        }
     }
 
     fn staged_commit_entry() -> CommitInfo {
@@ -1160,8 +1228,12 @@ impl App {
             Err(e) => return Err(e),
         };
 
-        self.session =
-            Self::load_or_create_session(&self.vcs_info, SessionDiffSource::StagedAndUnstaged);
+        self.session = Self::load_or_create_session(
+            &self.vcs_info,
+            SessionDiffSource::StagedAndUnstaged,
+            self.persistence_mode,
+            self.vcs.as_ref(),
+        );
         for file in &diff_files {
             let path = file.display_path().clone();
             self.session.add_file(path, file.status);
@@ -1195,7 +1267,12 @@ impl App {
             Err(e) => return Err(e),
         };
 
-        self.session = Self::load_or_create_session(&self.vcs_info, SessionDiffSource::Staged);
+        self.session = Self::load_or_create_session(
+            &self.vcs_info,
+            SessionDiffSource::Staged,
+            self.persistence_mode,
+            self.vcs.as_ref(),
+        );
         for file in &diff_files {
             let path = file.display_path().clone();
             self.session.add_file(path, file.status);
@@ -1229,7 +1306,12 @@ impl App {
             Err(e) => return Err(e),
         };
 
-        self.session = Self::load_or_create_session(&self.vcs_info, SessionDiffSource::Unstaged);
+        self.session = Self::load_or_create_session(
+            &self.vcs_info,
+            SessionDiffSource::Unstaged,
+            self.persistence_mode,
+            self.vcs.as_ref(),
+        );
         for file in &diff_files {
             let path = file.display_path().clone();
             self.session.add_file(path, file.status);
@@ -3051,15 +3133,14 @@ impl App {
 
         // Update session with the newest commit as base
         let newest_commit_id = selected_ids.last().unwrap().clone();
-        let loaded_session = load_latest_session_for_context(
-            &self.vcs_info.root_path,
-            self.vcs_info.branch_name.as_deref(),
+        let loaded_session = Self::load_session_for_context(
+            &self.vcs_info,
             &newest_commit_id,
             SessionDiffSource::CommitRange,
             Some(selected_ids.as_slice()),
-        )
-        .ok()
-        .and_then(|found| found.map(|(_path, session)| session));
+            self.persistence_mode,
+            self.vcs.as_ref(),
+        );
 
         let mut session = loaded_session.unwrap_or_else(|| {
             let mut session = ReviewSession::new(
@@ -3275,8 +3356,12 @@ impl App {
             Err(e) => return Err(e),
         };
 
-        self.session =
-            Self::load_or_create_staged_unstaged_and_commits_session(&self.vcs_info, &selected_ids);
+        self.session = Self::load_or_create_staged_unstaged_and_commits_session(
+            &self.vcs_info,
+            &selected_ids,
+            self.persistence_mode,
+            self.vcs.as_ref(),
+        );
 
         for file in &diff_files {
             let path = file.display_path().clone();
@@ -4132,11 +4217,13 @@ mod commit_selection_tests {
             Theme::dark(),
             None,
             false,
+            PersistenceMode::Local,
             Vec::new(),
             session,
             DiffSource::WorkingTree,
             InputMode::CommitSelect,
             commit_list,
+            false,
         )
         .expect("failed to build test app")
     }
@@ -4169,6 +4256,42 @@ mod commit_selection_tests {
         let app = build_app(vec![normal_commit("abc123"), App::staged_commit_entry()]);
 
         assert_eq!(app.special_commit_count(), 0);
+    }
+
+    #[test]
+    fn app_build_keeps_resolved_persistence_mode() {
+        let vcs_info = VcsInfo {
+            root_path: PathBuf::from("/tmp"),
+            head_commit: "head".to_string(),
+            branch_name: Some("main".to_string()),
+            vcs_type: VcsType::Git,
+        };
+        let session = ReviewSession::new(
+            vcs_info.root_path.clone(),
+            vcs_info.head_commit.clone(),
+            vcs_info.branch_name.clone(),
+            SessionDiffSource::WorkingTree,
+        );
+        let app = App::build(
+            Box::new(DummyVcs {
+                info: vcs_info.clone(),
+            }),
+            vcs_info,
+            Theme::dark(),
+            None,
+            false,
+            PersistenceMode::Repo,
+            Vec::new(),
+            session,
+            DiffSource::WorkingTree,
+            InputMode::CommitSelect,
+            Vec::new(),
+            true,
+        )
+        .expect("failed to build app");
+
+        assert_eq!(app.persistence_mode, PersistenceMode::Repo);
+        assert!(app.in_repo);
     }
 }
 
@@ -4511,5 +4634,157 @@ mod find_source_line_tests {
 
         let result = find_source_line(&annotations, 0, 20);
         assert_eq!(result, FindSourceLineResult::Nearest(0));
+    }
+}
+
+#[cfg(test)]
+mod persistence_dispatch_tests {
+    use super::*;
+    use crate::config::PersistenceMode;
+    use crate::model::review::SessionDiffSource;
+    use crate::model::FileStatus;
+    use crate::persistence::storage::save_session_in_repo;
+    use crate::vcs::traits::{VcsBackend, VcsInfo, VcsType};
+
+    struct DummyVcs {
+        info: VcsInfo,
+    }
+
+    impl VcsBackend for DummyVcs {
+        fn info(&self) -> &VcsInfo {
+            &self.info
+        }
+
+        fn get_working_tree_diff(
+            &self,
+            _highlighter: &SyntaxHighlighter,
+        ) -> crate::error::Result<Vec<DiffFile>> {
+            Err(crate::error::TuicrError::NoChanges)
+        }
+
+        fn fetch_context_lines(
+            &self,
+            _file_path: &Path,
+            _file_status: FileStatus,
+            _start_line: u32,
+            _end_line: u32,
+        ) -> crate::error::Result<Vec<DiffLine>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn temp_repo() -> PathBuf {
+        std::env::temp_dir().join(format!("tuicr-dispatch-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn load_context_repo_mode_finds_in_repo_session() {
+        let repo = temp_repo();
+        std::fs::create_dir_all(&repo).unwrap();
+
+        let vcs_info = VcsInfo {
+            root_path: repo.clone(),
+            head_commit: "abc123".to_string(),
+            branch_name: Some("main".to_string()),
+            vcs_type: VcsType::Git,
+        };
+        let vcs = DummyVcs {
+            info: vcs_info.clone(),
+        };
+
+        let mut session = ReviewSession::new(
+            repo.clone(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            SessionDiffSource::WorkingTree,
+        );
+        session.add_file(PathBuf::from("src/main.rs"), FileStatus::Modified);
+
+        save_session_in_repo(&session, "anonymous").unwrap();
+
+        let loaded = App::load_session_for_context(
+            &vcs_info,
+            "abc123",
+            SessionDiffSource::WorkingTree,
+            None,
+            PersistenceMode::Repo,
+            &vcs,
+        );
+        assert!(loaded.is_some(), "Repo mode should find in-repo session");
+        assert_eq!(loaded.unwrap().id, session.id);
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn load_context_repo_mode_ignores_local_sessions() {
+        let repo = temp_repo();
+        std::fs::create_dir_all(&repo).unwrap();
+
+        let vcs_info = VcsInfo {
+            root_path: repo.clone(),
+            head_commit: "abc123".to_string(),
+            branch_name: Some("main".to_string()),
+            vcs_type: VcsType::Git,
+        };
+        let vcs = DummyVcs {
+            info: vcs_info.clone(),
+        };
+
+        let loaded = App::load_session_for_context(
+            &vcs_info,
+            "abc123",
+            SessionDiffSource::WorkingTree,
+            None,
+            PersistenceMode::Repo,
+            &vcs,
+        );
+        assert!(
+            loaded.is_none(),
+            "Repo mode should not find sessions outside .tuicr/reviews/"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn load_context_local_mode_ignores_repo_sessions() {
+        let repo = temp_repo();
+        std::fs::create_dir_all(&repo).unwrap();
+
+        let vcs_info = VcsInfo {
+            root_path: repo.clone(),
+            head_commit: "abc123".to_string(),
+            branch_name: Some("main".to_string()),
+            vcs_type: VcsType::Git,
+        };
+        let vcs = DummyVcs {
+            info: vcs_info.clone(),
+        };
+
+        let mut session = ReviewSession::new(
+            repo.clone(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            SessionDiffSource::WorkingTree,
+        );
+        session.add_file(PathBuf::from("src/main.rs"), FileStatus::Modified);
+
+        save_session_in_repo(&session, "anonymous").unwrap();
+
+        let loaded = App::load_session_for_context(
+            &vcs_info,
+            "abc123",
+            SessionDiffSource::WorkingTree,
+            None,
+            PersistenceMode::Local,
+            &vcs,
+        );
+        assert!(
+            loaded.is_none(),
+            "Local mode should not find in-repo sessions"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
     }
 }

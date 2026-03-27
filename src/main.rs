@@ -92,6 +92,8 @@ fn main() -> anyhow::Result<()> {
             .and_then(|cfg| cfg.appearance.as_deref()),
     );
     startup_warnings.extend(theme_warnings);
+    let persistence_mode =
+        config::resolve_persistence_mode(cli_args.in_repo, config_outcome.config.as_ref());
 
     // Start update check in background (non-blocking)
     let update_rx = if !cli_args.no_update_check {
@@ -113,8 +115,10 @@ fn main() -> anyhow::Result<()> {
             .as_ref()
             .and_then(|cfg| cfg.comment_types.clone()),
         cli_args.output_to_stdout,
+        persistence_mode,
         cli_args.revisions.as_deref(),
         cli_args.working_tree,
+        cli_args.in_repo,
     ) {
         Ok(mut app) => {
             app.supports_keyboard_enhancement = keyboard_enhancement_supported;
@@ -263,7 +267,21 @@ fn main() -> anyhow::Result<()> {
                         match key.code {
                             crossterm::event::KeyCode::Char('Z') => {
                                 // ZZ: save session, export, and quit (same as :wq)
-                                let _ = persistence::save_session(&app.session);
+                                let _ = match app.persistence_mode {
+                                    config::PersistenceMode::Repo => {
+                                        let username = app
+                                            .vcs
+                                            .get_current_username()
+                                            .unwrap_or_else(|_| "anonymous".to_string());
+                                        persistence::save_session_in_repo(
+                                            &app.session,
+                                            &username,
+                                        )
+                                    }
+                                    config::PersistenceMode::Local => {
+                                        persistence::save_session(&app.session)
+                                    }
+                                };
                                 app.dirty = false;
                                 if app.session.has_comments() {
                                     handler::handle_export_and_quit(&mut app);

@@ -111,6 +111,15 @@ pub trait VcsBackend: Send {
         Ok(Vec::new())
     }
 
+    /// Resolve current username for the repository using VCS config when possible.
+    /// Falls back to "anonymous" if the username cannot be determined.
+    fn get_current_username(&self) -> Result<String> {
+        // Default implementation: provide a safe, static fallback so existing
+        // VCS backends don't need to implement this unless they have a meaningful
+        // source of truth.
+        Ok("anonymous".to_string())
+    }
+
     /// Get a combined diff from the parent of the oldest commit through to the working tree.
     /// This shows both committed and working tree changes in a single diff.
     /// Returns error if not supported (default).

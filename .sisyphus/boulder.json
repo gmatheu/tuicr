@@ -1,0 +1,19 @@
+{
+  "active_plan": "/home/gmatheu/Documents/misc/tuicr/.sisyphus/plans/in-repo-persistence.md",
+  "started_at": "2026-03-27T13:38:55.630Z",
+  "session_ids": [
+    "ses_2d09f74d5ffeUdkTZbbyRq0lhM",
+    "ses_2d0796cccffezC8JOvL66sFvop",
+    "ses_2d0796cccffddZoH6hs6U1SA8w",
+    "ses_2d06e5197ffeZlrkAf3CfhTSUC",
+    "ses_2d06a54ddffezjJf3jDlXRVNIU",
+    "ses_2d06a55b7ffeEw3W5mkgHy9nN4",
+    "ses_2d060222effebbKsoFzgwimcfM",
+    "ses_2d060222cffejt3k2AZJAtppL7",
+    "ses_2d059ea7affe323ktDjQJ3Npa8",
+    "ses_2d04e4acfffeYq9tzjTXAQsWRr"
+  ],
+  "plan_name": "in-repo-persistence",
+  "agent": "atlas",
+  "task_sessions": {}
+}

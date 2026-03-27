@@ -117,6 +117,25 @@ impl VcsBackend for JjBackend {
         &self.info
     }
 
+    fn get_current_username(&self) -> Result<String> {
+        // Try to read the username via `jj config get user.name`.
+        match run_jj_command(&self.info.root_path, &["config", "get", "user.name"]) {
+            Ok(output) => {
+                let name = output.trim();
+                if !name.is_empty() {
+                    return Ok(name.to_string());
+                }
+                // Empty output - fallback to anonymous
+                Ok("anonymous".to_string())
+            }
+            Err(_) => {
+                // If the command fails for any reason (jj not configured, not installed, etc.),
+                // fall back to the safe default.
+                Ok("anonymous".to_string())
+            }
+        }
+    }
+
     fn get_working_tree_diff(&self, highlighter: &SyntaxHighlighter) -> Result<Vec<DiffFile>> {
         // Get unified diff output from jj using --git format
         let diff_output = run_jj_command(&self.info.root_path, &["diff", "--git"])?;
@@ -637,6 +656,27 @@ mod tests {
             "Expected 'Third commit' in {:?}",
             summaries
         );
+    }
+
+    #[test]
+    fn test_jj_get_current_username() {
+        if !jj_available() {
+            eprintln!("Skipping test: jj command not available");
+            return;
+        }
+
+        let Some(temp) = setup_test_repo() else {
+            eprintln!("Skipping test: unable to setup test jj repo");
+            return;
+        };
+
+        let backend =
+            JjBackend::from_path(temp.path().to_path_buf()).expect("Failed to create jj backend");
+
+        let username = backend
+            .get_current_username()
+            .expect("Failed to get current username");
+        assert!(!username.trim().is_empty(), "Username should not be empty");
     }
 
     #[test]

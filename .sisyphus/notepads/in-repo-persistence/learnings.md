@@ -1,0 +1,14 @@
+# 2026-03-27
+- For Git username lookup, reading the repo-local config level avoids accidental inheritance from the machine's global `user.name`.
+- Temp repos via `tempfile::TempDir` keep VCS tests isolated and avoid CWD races under parallel test execution.
+- 20260327: Implemented automatic exclusion of the .tuicr/ directory from the ignore pass in tuicrignore.rs. This prevents repository-internal review artifacts from leaking into diff views, regardless of whether a .tuicrignore file exists.
+- Added unit tests for root-level and nested .tuicr paths to ensure the behavior remains correct when .tuicrignore patterns are present or absent.
+- Verification: All tests pass locally (cargo test) with 312 tests green.
+- 20260327 Task 9: `load_latest_in_repo_session` uses filename prefix matching (`{sanitized_user}_`) for user-scoping, then validates session content (diff_source, commit_range) after loading JSON. This two-phase filter is necessary because the username can contain underscores, making pure filename parsing unreliable.
+- Retention uses `session.updated_at` (not filesystem mtime) for age calculation, since git clone resets filesystem timestamps.
+- The loaded `repo_path` is replaced with the caller-supplied value to ensure cross-machine compatibility (stored JSON may have a different user's absolute path).
+- The persistence layer uses `SessionDiffSource` (from model) with a separate `commit_range: Option<&[String]>` parameter, matching the existing `load_latest_session_for_context` pattern. Does NOT depend on `app::DiffSource` to avoid coupling persistence to app state.
+- 20260327: Additional note: The “apply_tuicrignore” behavior is confirmed to be idempotent with respect to repeated loads; no changes required.
+- 20260327 Task 11: `save_session_in_repo` was using `session_filename()` (local naming convention starting with repo name) instead of `in_repo_session_filename()` (user-prefixed). This made save/load incompatible since `load_latest_in_repo_session` filters by `{username}_` prefix. Fixed by switching to `in_repo_session_filename` and adding `username: &str` parameter.
+- The `load_session_for_context` static method needed the VCS backend passed through to get the username for in-repo loading. All 10 call sites (5 static in App::new, 5 instance methods) were updated to pass `vcs.as_ref()`.
+- retention_days defaults to 0 (keep forever) in the dispatch since config plumbing isn't wired to App::new yet. This is the correct default per the plan.

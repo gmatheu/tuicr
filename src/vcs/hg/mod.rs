@@ -73,6 +73,21 @@ impl HgBackend {
 
         Ok(Self { info })
     }
+
+    /// Returns the current Mercurial username configured for the repo, falling back to "anonymous".
+    pub fn get_current_username(&self) -> String {
+        match Command::new("hg").args(&["config", "ui.username"]).output() {
+            Ok(out) if out.status.success() => {
+                let s = String::from_utf8_lossy(&out.stdout);
+                let username = s.trim();
+                if !username.is_empty() {
+                    return username.to_string();
+                }
+            }
+            _ => {}
+        }
+        "anonymous".to_string()
+    }
 }
 
 impl VcsBackend for HgBackend {
@@ -911,5 +926,43 @@ mod tests {
         // Verify we can get display_path without panic (the bug we fixed)
         // Don't assert exact path/status as hg implementations differ (Sapling vs standard hg)
         let _path = file.display_path();
+    }
+
+    #[test]
+    fn test_hg_get_current_username_configured() {
+        let Some(temp) = setup_test_repo() else {
+            eprintln!("Skipping test: hg command not available");
+            return;
+        };
+
+        // Configure per-repo username
+        let root = temp.path();
+        let hgrc_path = root.join(".hg").join("hgrc");
+        std::fs::write(hgrc_path, "[ui]\nusername = testuser\n").expect("Failed to write hgrc");
+
+        let backend =
+            HgBackend::from_path(root.to_path_buf()).expect("Failed to create hg backend");
+        let username = backend.get_current_username();
+        assert_eq!(username, "testuser");
+    }
+
+    #[test]
+    fn test_hg_get_current_username_fallback() {
+        let Some(temp) = setup_test_repo() else {
+            eprintln!("Skipping test: hg command not available");
+            return;
+        };
+
+        // Ensure there is no repo username configured
+        let root = temp.path();
+        let hgrc_path = root.join(".hg").join("hgrc");
+        if hgrc_path.exists() {
+            std::fs::remove_file(&hgrc_path).ok();
+        }
+
+        let backend =
+            HgBackend::from_path(root.to_path_buf()).expect("Failed to create hg backend");
+        let username = backend.get_current_username();
+        assert_eq!(username, "anonymous");
     }
 }

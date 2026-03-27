@@ -1072,6 +1072,8 @@ pub struct CliArgs {
     pub revisions: Option<String>,
     /// Skip commit selector and review uncommitted changes directly
     pub working_tree: bool,
+    /// Opt-in to in-repo persistence (store sessions under the repo path)
+    pub in_repo: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1418,15 +1420,16 @@ Usage: {name} [OPTIONS]
 Options:
   -r, --revisions <REVSET>  Commit range/Revset to review (syntax depends on VCS backend)
   --theme <THEME>        Color theme to use
-                          Valid values: {valid_values}
+                           Valid values: {valid_values}
   --appearance <MODE>    Appearance mode for default theme
-                         Valid values: {appearance_values}
-                         Used when no explicit theme is set
-                         Precedence: --appearance > {config_path} > system
+                          Valid values: {appearance_values}
+                          Used when no explicit theme is set
+                          Precedence: --appearance > {config_path} > system
   -w, --working-tree     Include uncommitted changes (skip commit selector when used alone,
-                         combine with commits when used with -r)
-  --stdout               Output to stdout instead of clipboard when exporting
-  --no-update-check      Skip checking for updates on startup
+                           combine with commits when used with -r)
+   --in-repo              Use in-repo persistence mode for review sessions
+   --stdout               Output to stdout instead of clipboard when exporting
+   --no-update-check      Skip checking for updates on startup
   -V, --version          Print version
   -h, --help             Print this help message
 
@@ -1465,6 +1468,11 @@ fn parse_cli_args_from(args: &[String]) -> Result<CliArgs, String> {
         // Handle --stdout
         if args[i] == "--stdout" {
             cli_args.output_to_stdout = true;
+        }
+
+        // Handle --in-repo
+        if args[i] == "--in-repo" {
+            cli_args.in_repo = true;
         }
 
         // Handle --no-update-check
@@ -1627,6 +1635,18 @@ mod tests {
     fn should_default_working_tree_to_false() {
         let parsed = parse_for_test(&["tuicr"]).expect("parse should succeed");
         assert!(!parsed.working_tree);
+    }
+
+    #[test]
+    fn should_parse_in_repo_flag_true() {
+        let parsed = parse_for_test(&["tuicr", "--in-repo"]).expect("parse should succeed");
+        assert!(parsed.in_repo);
+    }
+
+    #[test]
+    fn should_default_in_repo_false() {
+        let parsed = parse_for_test(&["tuicr"]).expect("parse should succeed");
+        assert!(!parsed.in_repo);
     }
 
     #[test]

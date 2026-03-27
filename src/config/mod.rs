@@ -26,6 +26,29 @@ pub struct AppConfig {
     pub show_file_list: Option<bool>,
     pub diff_view: Option<String>,
     pub wrap: Option<bool>,
+    pub persistence: Option<String>,
+    pub in_repo_retention_days: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PersistenceMode {
+    #[default]
+    Local,
+    Repo,
+}
+
+pub fn resolve_persistence_mode(
+    cli_repo_flag: bool,
+    config: Option<&AppConfig>,
+) -> PersistenceMode {
+    if cli_repo_flag {
+        return PersistenceMode::Repo;
+    }
+
+    match config.and_then(|cfg| cfg.persistence.as_deref()) {
+        Some("repo") => PersistenceMode::Repo,
+        _ => PersistenceMode::Local,
+    }
 }
 
 /// Known top-level config keys. Used to warn about typos.
@@ -38,6 +61,8 @@ const KNOWN_KEYS: &[&str] = &[
     "show_file_list",
     "diff_view",
     "wrap",
+    "persistence",
+    "in_repo_retention_days",
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -123,6 +148,27 @@ fn read_bool(table: &toml::Table, key: &str, warnings: &mut Vec<String>) -> Opti
     }
 }
 
+/// Read a u32 value from the table, pushing a warning if the type is wrong.
+fn read_u32(table: &toml::Table, key: &str, warnings: &mut Vec<String>) -> Option<u32> {
+    let val = table.get(key)?;
+    if let Some(n) = val.as_integer() {
+        if n >= 0 {
+            // Safe to cast since we've checked non-negative and will be <= i64::MAX
+            Some(n as u32)
+        } else {
+            warnings.push(format!(
+                "Warning: Config key '{key}' must be a non-negative integer; ignoring value"
+            ));
+            None
+        }
+    } else {
+        warnings.push(format!(
+            "Warning: Config key '{key}' must be a non-negative integer; ignoring value"
+        ));
+        None
+    }
+}
+
 /// Read a string value constrained to a set of allowed values.
 fn read_enum(
     table: &toml::Table,
@@ -176,6 +222,8 @@ fn load_config_from_path(path: &Path) -> Result<ConfigLoadOutcome> {
             &mut warnings,
         ),
         wrap: read_bool(table, "wrap", &mut warnings),
+        persistence: read_enum(table, "persistence", &["local", "repo"], &mut warnings),
+        in_repo_retention_days: read_u32(table, "in_repo_retention_days", &mut warnings),
     };
 
     for key in table.keys() {
@@ -648,6 +696,76 @@ mod tests {
         assert_eq!(comment_types[0].id, "note");
         assert_eq!(comment_types[0].color, None);
         assert_eq!(outcome.warnings.len(), 1);
+    }
+
+    #[test]
+    fn should_parse_persistence_and_in_repo_retention_days() {
+        // Build TOML content programmatically to avoid multiline string pitfalls
+        let mut toml = String::new();
+        toml.push_str("persistence = \"local\"\n");
+        toml.push_str("in_repo_retention_days = 14\n");
+        let outcome = parse_config(&toml);
+        let cfg = outcome.config.as_ref().unwrap();
+        assert_eq!(cfg.persistence.as_deref(), Some("local"));
+        assert_eq!(cfg.in_repo_retention_days, Some(14));
+        assert!(outcome.warnings.is_empty());
+    }
+
+    #[test]
+    fn should_warn_on_invalid_persistence_value() {
+        let outcome = parse_config(r#"persistence = "invalid""#);
+        let cfg = outcome.config.as_ref().unwrap();
+        assert!(cfg.persistence.is_none());
+        assert!(outcome.warnings.iter().any(|w| w.contains("persistence")));
+    }
+
+    #[test]
+    fn should_warn_on_invalid_in_repo_retention_days_type() {
+        let outcome = parse_config(r#"in_repo_retention_days = "7""#);
+        let cfg = outcome.config.as_ref().unwrap();
+        assert!(cfg.in_repo_retention_days.is_none());
+        assert!(
+            outcome
+                .warnings
+                .iter()
+                .any(|w| w.contains("in_repo_retention_days"))
+        );
+    }
+
+    #[test]
+    fn should_resolve_repo_mode_when_cli_flag_is_set() {
+        let cfg = AppConfig {
+            persistence: Some("local".to_string()),
+            ..AppConfig::default()
+        };
+        let mode = resolve_persistence_mode(true, Some(&cfg));
+        assert_eq!(mode, PersistenceMode::Repo);
+    }
+
+    #[test]
+    fn should_resolve_repo_mode_from_config_when_cli_flag_is_not_set() {
+        let cfg = AppConfig {
+            persistence: Some("repo".to_string()),
+            ..AppConfig::default()
+        };
+        let mode = resolve_persistence_mode(false, Some(&cfg));
+        assert_eq!(mode, PersistenceMode::Repo);
+    }
+
+    #[test]
+    fn should_resolve_local_mode_from_config_when_set_to_local() {
+        let cfg = AppConfig {
+            persistence: Some("local".to_string()),
+            ..AppConfig::default()
+        };
+        let mode = resolve_persistence_mode(false, Some(&cfg));
+        assert_eq!(mode, PersistenceMode::Local);
+    }
+
+    #[test]
+    fn should_default_to_local_mode_without_cli_flag_or_config() {
+        let mode = resolve_persistence_mode(false, None);
+        assert_eq!(mode, PersistenceMode::Local);
     }
 
     // config path resolution

@@ -1,3 +1,4 @@
+use chrono::Utc;
 use directories::ProjectDirs;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -109,6 +110,70 @@ fn sanitize_filename_component(value: &str) -> String {
     }
 }
 
+/// Returns the in-repo reviews directory for a given repository path.
+/// The directory is expected to live at <repo_path>/.tuicr/reviews.
+/// The function will attempt to create the directory if possible and
+/// simply return the path regardless of creation outcome.
+pub fn get_in_repo_reviews_dir(repo_path: &Path) -> PathBuf {
+    let path = repo_path.join(".tuicr").join("reviews");
+    // Best-effort creation; do not fail callers if the filesystem is read-only
+    let _ = fs::create_dir_all(&path);
+    path
+}
+
+/// Generate an in-repo session filename for a given ReviewSession and user.
+/// Pattern (approximate): {username}_{base_short}_{head_short}_{timestamp}_{uuid_fragment}.json
+/// - username: sanitized to be filesystem-friendly
+/// - base_short: first 8 chars of the base commit (or whole value if shorter)
+/// - head_short: derived from commit range if present, otherwise a short repo fingerprint
+/// - timestamp: UTC timestamp of session creation in YYYYMMDD_HHMMSS
+/// - uuid_fragment: first segment of the session UUID (split on '-')
+pub fn in_repo_session_filename(session: &ReviewSession, username: &str) -> String {
+    // Base short (8 chars max)
+    let base_short = session.base_commit.chars().take(8).collect::<String>();
+
+    // Head short: prefer last commit in range if provided, otherwise derive from repo path fingerprint
+    let head_short: String = if let Some(range) = &session.commit_range {
+        if let Some(last) = range.last() {
+            let mut v = sanitize_filename_component(last);
+            if v.len() > 8 {
+                v.truncate(8);
+            }
+            v
+        } else {
+            // No range entries; fallback to a stable fingerprint
+            let mut v = repo_path_fingerprint(&session.repo_path);
+            if v.len() > 8 {
+                v.truncate(8);
+            }
+            v
+        }
+    } else {
+        let mut v = repo_path_fingerprint(&session.repo_path);
+        if v.len() > 8 {
+            v.truncate(8);
+        }
+        v
+    };
+
+    // Timestamp
+    let timestamp = session.created_at.format("%Y%m%d_%H%M%S").to_string();
+    // ID fragment
+    let id_fragment = session
+        .id
+        .split('-')
+        .next()
+        .unwrap_or(&session.id)
+        .to_string();
+    // Username sanitized
+    let user = sanitize_filename_component(username);
+
+    format!(
+        "{}_{}_{}_{}_{}.json",
+        user, base_short, head_short, timestamp, id_fragment
+    )
+}
+
 fn fnv1a_64(bytes: &[u8]) -> u64 {
     const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
     const PRIME: u64 = 0x100000001b3;
@@ -180,6 +245,99 @@ pub fn save_session(session: &ReviewSession) -> Result<PathBuf> {
     fs::write(&path, json)?;
 
     Ok(path)
+}
+
+pub fn save_session_in_repo(session: &ReviewSession, username: &str) -> Result<PathBuf> {
+    let dir = get_in_repo_reviews_dir(&session.repo_path);
+    fs::create_dir_all(&dir)?;
+    let filename = in_repo_session_filename(session, username);
+    let path = dir.join(&filename);
+    let json = serde_json::to_string_pretty(session)?;
+    fs::write(&path, json)?;
+    Ok(path)
+}
+
+/// Loads the most recent in-repo session for `current_user`, filtering by
+/// `diff_source` and optional `commit_range`.  Sessions older than
+/// `retention_days` are skipped (never deleted); `0` disables the age check.
+/// The stored `repo_path` is replaced with the caller-supplied value.
+pub fn load_latest_in_repo_session(
+    repo_path: &Path,
+    diff_source: SessionDiffSource,
+    commit_range: Option<&[String]>,
+    current_user: &str,
+    retention_days: u32,
+) -> Result<Option<(PathBuf, ReviewSession)>> {
+    let reviews_dir = get_in_repo_reviews_dir(repo_path);
+
+    if !reviews_dir.is_dir() {
+        return Ok(None);
+    }
+
+    let sanitized_user = sanitize_filename_component(current_user);
+    let user_prefix = format!("{sanitized_user}_");
+
+    let now = Utc::now();
+
+    let mut best: Option<(PathBuf, ReviewSession)> = None;
+
+    let entries = fs::read_dir(&reviews_dir)?;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        {
+            continue;
+        }
+
+        let Some(filename) = path.file_name().and_then(|f| f.to_str()) else {
+            continue;
+        };
+        if !filename.starts_with(&user_prefix) {
+            continue;
+        }
+
+        let Ok(mut session) = load_session(&path) else {
+            continue;
+        };
+
+        if session.diff_source != diff_source {
+            continue;
+        }
+
+        if matches!(
+            diff_source,
+            SessionDiffSource::CommitRange
+                | SessionDiffSource::WorkingTreeAndCommits
+                | SessionDiffSource::StagedUnstagedAndCommits
+        ) && let Some(expected_range) = commit_range
+            && session.commit_range.as_deref() != Some(expected_range)
+        {
+            continue;
+        }
+
+        if retention_days > 0 {
+            let age = now.signed_duration_since(session.updated_at);
+            if age.num_days() > i64::from(retention_days) {
+                continue;
+            }
+        }
+
+        session.repo_path = repo_path.to_path_buf();
+
+        let dominated = best
+            .as_ref()
+            .is_some_and(|(_, existing)| existing.updated_at >= session.updated_at);
+        if !dominated {
+            best = Some((path, session));
+        }
+    }
+
+    Ok(best)
 }
 
 pub fn load_session(path: &PathBuf) -> Result<ReviewSession> {
@@ -497,6 +655,32 @@ mod tests {
         let filename = session_filename(&session);
         assert!(!filename.contains('/'));
         assert!(filename.contains("feature-login"));
+    }
+
+    #[test]
+    fn should_resolve_in_repo_reviews_dir_path() {
+        let repo_path =
+            std::env::temp_dir().join(format!("tuicr-inrepo-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&repo_path).unwrap();
+        let in_repo = get_in_repo_reviews_dir(&repo_path);
+        assert_eq!(in_repo, repo_path.join(".tuicr").join("reviews"));
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn should_generate_in_repo_session_filename_basic() {
+        let repo_path = PathBuf::from("/tmp/tuicr-inrepo");
+        let mut session = ReviewSession::new(
+            repo_path,
+            "abcdef12".to_string(),
+            Some("main".to_string()),
+            SessionDiffSource::WorkingTree,
+        );
+        session.add_file(PathBuf::from("src/main.rs"), FileStatus::Modified);
+        let fname = in_repo_session_filename(&session, "alice");
+        assert!(fname.starts_with("alice_"));
+        assert!(fname.contains("abcdef12"));
+        assert!(fname.ends_with(".json"));
     }
 
     #[test]
@@ -929,5 +1113,480 @@ mod tests {
             normalize_repo_path(&selected.repo_path),
             normalize_repo_path(&repo_a)
         );
+    }
+
+    fn temp_repo_path() -> PathBuf {
+        std::env::temp_dir().join(format!("tuicr-inrepo-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    fn save_in_repo_session_file(
+        repo_path: &Path,
+        session: &ReviewSession,
+        username: &str,
+    ) -> PathBuf {
+        let dir = get_in_repo_reviews_dir(repo_path);
+        fs::create_dir_all(&dir).unwrap();
+        let filename = in_repo_session_filename(session, username);
+        let path = dir.join(filename);
+        let json = serde_json::to_string_pretty(session).unwrap();
+        fs::write(&path, json).unwrap();
+        path
+    }
+
+    fn create_aged_session(
+        repo_path: PathBuf,
+        base_commit: &str,
+        branch_name: Option<&str>,
+        diff_source: SessionDiffSource,
+        commit_range: Option<Vec<String>>,
+        days_ago: i64,
+    ) -> ReviewSession {
+        let mut session = create_session(repo_path, base_commit, branch_name, diff_source, commit_range);
+        let past = Utc::now() - chrono::Duration::days(days_ago);
+        session.created_at = past;
+        session.updated_at = past;
+        session
+    }
+
+    #[test]
+    fn in_repo_load_returns_current_user_session_only() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let alice_session = create_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+        save_in_repo_session_file(&repo, &alice_session, "alice");
+
+        let bob_session = create_session(
+            repo.clone(),
+            "def456",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+        save_in_repo_session_file(&repo, &bob_session, "bob");
+
+        let result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(result.is_some());
+        let (_, loaded) = result.unwrap();
+        assert_eq!(loaded.id, alice_session.id);
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn in_repo_load_skips_old_sessions_without_deleting() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let old_session = create_aged_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+            30,
+        );
+        let old_path = save_in_repo_session_file(&repo, &old_session, "alice");
+
+        let result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            7,
+        )
+        .unwrap();
+        assert!(result.is_none());
+        assert!(old_path.exists(), "file must NOT be deleted by retention");
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn in_repo_load_zero_retention_loads_all() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let ancient_session = create_aged_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+            365,
+        );
+        save_in_repo_session_file(&repo, &ancient_session, "alice");
+
+        let result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(result.is_some());
+        let (_, loaded) = result.unwrap();
+        assert_eq!(loaded.id, ancient_session.id);
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn in_repo_load_returns_none_when_no_match() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let session = create_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+        save_in_repo_session_file(&repo, &session, "bob");
+
+        let result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(result.is_none());
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn in_repo_load_filters_by_diff_source() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let worktree_session = create_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+        save_in_repo_session_file(&repo, &worktree_session, "alice");
+
+        let result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::CommitRange,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(result.is_none());
+
+        let result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(result.is_some());
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn in_repo_load_matches_commit_range() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let range = vec!["commit-a".to_string(), "commit-b".to_string()];
+        let session = create_session(
+            repo.clone(),
+            "commit-a",
+            Some("main"),
+            SessionDiffSource::CommitRange,
+            Some(range.clone()),
+        );
+        save_in_repo_session_file(&repo, &session, "alice");
+
+        let wrong_range = vec!["other-a".to_string(), "other-b".to_string()];
+        let miss = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::CommitRange,
+            Some(wrong_range.as_slice()),
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(miss.is_none());
+
+        let hit = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::CommitRange,
+            Some(range.as_slice()),
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(hit.is_some());
+        assert_eq!(hit.unwrap().1.id, session.id);
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn in_repo_load_returns_most_recent_session() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let older = create_aged_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+            2,
+        );
+        save_in_repo_session_file(&repo, &older, "alice");
+
+        let newer = create_session(
+            repo.clone(),
+            "def456",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+        save_in_repo_session_file(&repo, &newer, "alice");
+
+        let result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.1.id, newer.id);
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn in_repo_load_sanitizes_repo_path() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let mut session = create_session(
+            PathBuf::from("/some/other/absolute/path"),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+        session.add_file(PathBuf::from("src/main.rs"), FileStatus::Modified);
+        save_in_repo_session_file(&repo, &session, "alice");
+
+        let (_, loaded) = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(loaded.repo_path, repo);
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn in_repo_load_returns_none_for_empty_dir() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(result.is_none());
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn in_repo_load_returns_none_when_dir_missing() {
+        let repo = temp_repo_path();
+        let result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn no_cross_talk_local_load_ignores_repo_sessions() {
+        let _guard = with_test_reviews_dir();
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let session = create_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+        save_in_repo_session_file(&repo, &session, "alice");
+
+        let local = load_latest_session_for_context(
+            &repo,
+            Some("main"),
+            "abc123",
+            SessionDiffSource::WorkingTree,
+            None,
+        )
+        .unwrap();
+        assert!(
+            local.is_none(),
+            "local load must not find in-repo sessions"
+        );
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn no_cross_talk_repo_load_ignores_local_sessions() {
+        let _guard = with_test_reviews_dir();
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let session = create_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+        save_session(&session).unwrap();
+
+        let repo_result = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(
+            repo_result.is_none(),
+            "repo load must not find local sessions"
+        );
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn save_session_in_repo_round_trips_with_load() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let mut session = create_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+        session.add_file(PathBuf::from("src/lib.rs"), FileStatus::Modified);
+
+        let saved_path = save_session_in_repo(&session, "alice").unwrap();
+        assert!(saved_path.starts_with(repo.join(".tuicr").join("reviews")));
+        assert!(saved_path.exists());
+
+        let loaded = load_latest_in_repo_session(
+            &repo,
+            SessionDiffSource::WorkingTree,
+            None,
+            "alice",
+            0,
+        )
+        .unwrap();
+        assert!(loaded.is_some(), "should load the session we just saved");
+        let (_, loaded_session) = loaded.unwrap();
+        assert_eq!(loaded_session.id, session.id);
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn save_session_in_repo_stores_under_tuicr_reviews() {
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let session = create_session(
+            repo.clone(),
+            "def456",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+
+        let path = save_session_in_repo(&session, "bob").unwrap();
+        let expected_dir = repo.join(".tuicr").join("reviews");
+        assert!(
+            path.starts_with(&expected_dir),
+            "repo save must write under .tuicr/reviews/"
+        );
+        assert!(path.exists());
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn save_session_local_does_not_write_to_repo() {
+        let _guard = with_test_reviews_dir();
+        let repo = temp_repo_path();
+        fs::create_dir_all(&repo).unwrap();
+
+        let session = create_session(
+            repo.clone(),
+            "abc123",
+            Some("main"),
+            SessionDiffSource::WorkingTree,
+            None,
+        );
+
+        let path = save_session(&session).unwrap();
+        assert!(
+            !path.starts_with(&repo),
+            "local save must not write under the repo"
+        );
+
+        let _ = fs::remove_dir_all(&repo);
     }
 }

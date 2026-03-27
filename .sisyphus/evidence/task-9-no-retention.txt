@@ -1,0 +1,17 @@
+warning: unused import: `load_latest_in_repo_session`
+ --> src/persistence/mod.rs:4:5
+  |
+4 |     load_latest_in_repo_session, load_latest_session_for_context, save_session,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tuicr` (bin "tuicr" test) generated 1 warning (run `cargo fix --bin "tuicr" -p tuicr --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/main.rs (target/debug/deps/tuicr-a0c08f8c3a4055ea)
+
+running 1 test
+test persistence::storage::tests::in_repo_load_zero_retention_loads_all ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 321 filtered out; finished in 0.00s
+

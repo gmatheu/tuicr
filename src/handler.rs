@@ -1,10 +1,24 @@
 use crate::app::{self, App, FileTreeItem, FocusedPanel};
+use crate::config::PersistenceMode;
 use crate::input::Action;
 use crate::output::{export_to_clipboard, generate_export_content};
-use crate::persistence::save_session;
+use crate::persistence::{save_session, save_session_in_repo};
 use crate::text_edit::{
     delete_char_before, delete_word_before, next_char_boundary, prev_char_boundary,
 };
+
+fn dispatch_save(app: &App) -> crate::error::Result<std::path::PathBuf> {
+    match app.persistence_mode {
+        PersistenceMode::Repo => {
+            let username = app
+                .vcs
+                .get_current_username()
+                .unwrap_or_else(|_| "anonymous".to_string());
+            save_session_in_repo(&app.session, &username)
+        }
+        PersistenceMode::Local => save_session(&app.session),
+    }
+}
 
 /// Export review: either to clipboard or set pending stdout output based on app.output_to_stdout.
 /// When output_to_stdout is true, stores the content and sets should_quit.
@@ -154,14 +168,14 @@ pub fn handle_command_action(app: &mut App, action: Action) {
                     }
                 }
                 "q!" | "quit!" => app.should_quit = true,
-                "w" | "write" => match save_session(&app.session) {
+                "w" | "write" => match dispatch_save(app) {
                     Ok(path) => {
                         app.dirty = false;
                         app.set_message(format!("Saved to {}", path.display()));
                     }
                     Err(e) => app.set_error(format!("Save failed: {e}")),
                 },
-                "x" | "wq" => match save_session(&app.session) {
+                "x" | "wq" => match dispatch_save(app) {
                     Ok(_) => {
                         app.dirty = false;
                         if app.session.has_comments() {
