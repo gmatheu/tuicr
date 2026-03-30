@@ -768,6 +768,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "gm-tuicr"
+version = "0.11.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "base64",
+ "chrono",
+ "crossterm",
+ "directories",
+ "git2",
+ "ignore",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "syntect",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "two-face",
+ "unicode-width",
+ "ureq",
+ "uuid",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2402,31 +2427,6 @@ dependencies = [
  "memchr",
  "nom 8.0.0",
  "petgraph",
-]
-
-[[package]]
-name = "tuicr"
-version = "0.10.0"
-dependencies = [
- "anyhow",
- "arboard",
- "base64",
- "chrono",
- "crossterm",
- "directories",
- "git2",
- "ignore",
- "ratatui",
- "serde",
- "serde_json",
- "syntect",
- "tempfile",
- "thiserror 2.0.18",
- "toml",
- "two-face",
- "unicode-width",
- "ureq",
- "uuid",
 ]
 
 [[package]]
