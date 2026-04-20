@@ -4,24 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [0.12.0] - 2026-04-20
 
-### Features
-
-- Add local storage option for review sessions - store sessions in `.tuicr/reviews/` instead of global data directory
-- Auto-export markdown alongside session files - generates `.md` file with same base filename when saving
-
-## [0.10.0] - 2026-04-10
-
 ### Bug Fixes
 
 - Auto-scroll viewport to keep comment input box visible (#235)
 - Align side-by-side diff separator by stripping trailing \n from highlighted spans (#238)
 - GoToBottom (Shift+G) moves to last line, not top of last file (#240)
 - GoToBottom (Shift+G) positions last line at bottom of viewport, not top
+- Reset cursor to overview in sort_files_by_directory, not just new() (#246)
 
 ### Features
 
-- Add Solarized Light and Solarized Dark themes (#224)
-- Add ZZ (export+quit) and ZQ (quit) vim keybindings (#225)
 - Add --path flag to filter diff to a specific file or directory (#227)
 - **ignore:** Also read .gitignore when filtering diff files (#231)
 - **ui:** Show current file path in diff panel header (#234)
@@ -29,88 +21,8 @@ All notable changes to this project will be documented in this file.
 - Incremental gap expansion with 20-line default, Shift+Enter for full expand (#239)
 - Directional gap expansion with ↓/↑/↕ arrows
 - **export:** Filter comment type legend to used types and add export_legend config (#242)
-
-## [0.9.0] - 2026-03-24
-
-### Bug Fixes
-
-- Append newline to lines passed to syntect parser for correct scope matching (#202)
-- **diff-parser:** Handle empty files and mode-only changes in git-style diffs (#215)
-- **input:** Support Shift+Tab reverse cycling (#213)
-
-### Documentation
-
-- Add {N}G jump-to-line shortcut to README and AGENTS.md (#216)
-
-### Features
-
-- **skill:** Improve skill integration with other agents (#201)
-- **config:** Customizable comment types with labels, colors and definitions (#211)
-- Add --version flag (#212)
-- **config:** Add show_file_list, diff_view, and wrap config options (#218)
-- Add Nord theme (#219)
-- Add staged and unstaged review options (#183)
-
-## [0.8.0] - 2026-03-11
-
-### Bug Fixes
-
-- **ui:** Make diff row backgrounds consistent to eol (#180)
-- **diff:** Normalize tabs across parsers and add coverage (#179)
-- **ui:** Shift focus to diff when file list is collapsed (#185)
-- Remove nix result symlink that breaks cargo publish
-
-### Features
-
-- **theme:** Add gruvbox-dark, gruvbox-light themes (#181)
-- Show commit message as reviewable entry for single-commit reviews (#182)
-- Add {N}G shortcut to jump to source line in diff view (#193)
-- **theme:** Add ayu-light and onedark themes (#195)
-- **theme:** Add appearance mode and split dark/light config variants (#196)
-- **comments:** Add review-level comments across review scope (#197)
-
-## [0.7.2] - 2026-02-12
-
-### Bug Fixes
-
-- Skip large untracked files to prevent startup hang (#177)
-- Prefer OSC 52 clipboard in Zellij sessions (#176)
-
-## [0.7.0] - 2026-02-10
-
-### Bug Fixes
-
-- **diff:** Expand collapsed lines in side-by-side mode (#156)
-- **config:** Ignore unknown keys while preserving known settings (#166)
-
-### Features
-
-- **syntax:** Add syntax highlighting for diffs (#154)
-- **syntax:** Replace syntect defaults with two-face for expanded syntax highlighting (#155)
-- Add inline commit selector for multi-commit reviews (#160)
-- Allow selecting both worktree and commits in the selector (#161)
-- Add configuration file support and catppuccin themes (#162)
-
-## [0.6.0] - 2026-01-30
-
-### Bug Fixes
-
-- **ui:** Render comment input inline instead of as overlay (#137)
-- **jj:** Show closest bookmark instead of 'detached' in UI (#144)
-- **input:** Handle multi-byte UTF-8 characters in comment input (#132) (#147)
-
-### Documentation
-
-- **ui:** Update help and docs for search, commands, and stdout export (#148)
-
-### Features
-
-- **cli:** Add --stdout flag to output export to stdout (#142)
-- **skill:** Add Claude Code skill for interactive review (#143)
-- **app:** Support expandable commit list and adjust default commit loading (#138)
-- **update:** Check crates.io for new releases and surface update status in UI (#150)
-
-## [0.5.0] - 2026-01-23
+- Display diff stats (+insertions -deletions) in diff panel title (#245)
+## [0.10.0] - 2026-03-27
 
 ### Bug Fixes
 
@@ -241,12 +153,16 @@ All notable changes to this project will be documented in this file.
 - **diff:** Normalize tabs across parsers and add coverage (#179)
 - **ui:** Shift focus to diff when file list is collapsed (#185)
 - Remove nix result symlink that breaks cargo publish
+- Append newline to lines passed to syntect parser for correct scope matching (#202)
+- **diff-parser:** Handle empty files and mode-only changes in git-style diffs (#215)
+- **input:** Support Shift+Tab reverse cycling (#213)
 
 ### Documentation
 
 - Add Homebrew installation and tap update instructions
 - Update demo for v0.3.0 (#99)
 - **ui:** Update help and docs for search, commands, and stdout export (#148)
+- Add {N}G jump-to-line shortcut to README and AGENTS.md (#216)
 
 ### Features
 
@@ -289,6 +205,12 @@ All notable changes to this project will be documented in this file.
 - **theme:** Add ayu-light and onedark themes (#195)
 - **theme:** Add appearance mode and split dark/light config variants (#196)
 - **comments:** Add review-level comments across review scope (#197)
+- **skill:** Improve skill integration with other agents (#201)
+- **config:** Customizable comment types with labels, colors and definitions (#211)
+- Add --version flag (#212)
+- **config:** Add show_file_list, diff_view, and wrap config options (#218)
+- Add Nord theme (#219)
+- Add staged and unstaged review options (#183)
 - Add Solarized Light and Solarized Dark themes (#224)
 - Add ZZ (export+quit) and ZQ (quit) vim keybindings (#225)
 
@@ -307,4 +229,5 @@ All notable changes to this project will be documented in this file.
 
 ### Ui
 
-- # Add theme support with dark and light modes (#105)
+- Add theme support with dark and light modes (#105)
+
