@@ -421,6 +421,7 @@ enum CommentLocation {
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         theme: Theme,
         comment_type_configs: Option<Vec<CommentTypeConfig>>,
@@ -4951,6 +4952,7 @@ mod expand_gap_tests {
             InputMode::Normal,
             Vec::new(),
             None,
+            false,
         )
         .expect("failed to build test app")
     }

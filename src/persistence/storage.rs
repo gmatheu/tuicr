@@ -1065,7 +1065,7 @@ mod tests {
 
         let path =
             save_session(&session, true, &test_diff_source(), &test_comment_types()).unwrap();
-        assert!(path.starts_with(&repo_path.join(".tuicr").join("reviews")));
+        assert!(path.starts_with(repo_path.join(".tuicr").join("reviews")));
 
         let loaded = load_latest_session_for_context(
             &repo_path,

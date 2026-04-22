@@ -633,6 +633,7 @@ mod tests {
             "Warning: Config key 'local_storage' must be a boolean; ignoring value"
         );
     }
+    #[test]
     fn should_default_export_legend_to_none() {
         let outcome = parse_config("\n");
         assert_eq!(
